@@ -101,7 +101,8 @@ h2{font-size:clamp(36px,9vw,52px);margin:4px 0 6px;line-height:1}
     <h1 class="title">Čtecí <span>raketa</span></h1>
     <p class="lead">Shora padají slova. Ťukni na mikrofon a přečti jedno nahlas. Když ho přečteš správně, raketa ho sestřelí dřív, než doletí dolů.</p>
     <div class="card">
-      <div class="row"><span>Slova</span><div class="seg" data-k="level"><button data-v="0">Krátká</button><button data-v="1">Delší</button><button data-v="2">Dlouhá</button></div></div>
+      <div class="row"><span>Slova<br><small style="color:var(--muted);font-size:14px">vyber jedno i víc</small></span><div class="seg" data-k="levels"><button data-v="0">Krátká</button><button data-v="1">Delší</button><button data-v="2">Dlouhá</button></div></div>
+      <div class="row"><span>Počet slov</span><div class="seg" data-k="count"><button data-v="10">10</button><button data-v="20">20</button><button data-v="0">Bez omezení</button></div></div>
       <div class="row"><span>Písmo</span><div class="seg" data-k="caps"><button data-v="1">VELKÁ</button><button data-v="0">malá</button></div></div>
       <div class="row"><span>Tempo</span><div class="seg" data-k="tempo"><button data-v="0">Pomalé</button><button data-v="1">Střední</button><button data-v="2">Rychlé</button></div></div>
       <div class="row"><span>Kdo hodnotí</span><div class="seg" data-k="judge"><button data-v="mic">Mikrofon</button><button data-v="adult">Dospělý</button></div></div>
@@ -122,7 +123,7 @@ h2{font-size:clamp(36px,9vw,52px);margin:4px 0 6px;line-height:1}
 
 <section id="over" class="screen">
   <div class="panel center">
-    <h2>Konec hry</h2>
+    <h2 id="oTitle">Konec hry</h2>
     <div class="stats"><div><b id="oRead">0</b><span>přečtených slov</span></div><div><b id="oScore">0</b><span>bodů</span></div></div>
     <div id="oMissWrap"><p class="note">Tato slova si ještě procvič. Ťuknutím si je poslechneš.</p><div class="chips" id="oMiss"></div></div>
     <button class="big" id="againBtn">Hrát znovu</button>
@@ -139,8 +140,10 @@ const WORDS=[
 ];
 const TEMPO=[{fall:24,max:1,gap:3},{fall:16,max:2,gap:2.6},{fall:11,max:3,gap:2}];
 
-let S={level:0,caps:1,tempo:0,judge:'mic',say:true};
+let S={levels:[0],count:0,caps:1,tempo:0,judge:'mic',say:true};
 try{const s=JSON.parse(localStorage.getItem('cteci-raketa')||'null');if(s)Object.assign(S,s);}catch(e){}
+if(!Array.isArray(S.levels)||!S.levels.length)S.levels=[typeof S.level==='number'?S.level:0];
+if(![0,10,20].includes(S.count))S.count=0;
 function saveS(){try{localStorage.setItem('cteci-raketa',JSON.stringify(S));}catch(e){}}
 
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -162,18 +165,20 @@ const stars=Array.from({length:90},()=>({x:Math.random(),y:Math.random(),r:rand(
 
 /* ---------- state ---------- */
 let G=null,state='menu',bag=[];
-function nextWord(){if(!bag.length)bag=shuffle(WORDS[S.level].slice());return bag.pop();}
+function nextWord(){if(!bag.length)bag=shuffle(S.levels.flatMap(i=>WORDS[i]));return bag.pop();}
 function fontSize(){return Math.round(Math.max(26,Math.min(46,cw/8.5)));}
 function dangerY(){const bar=$('bar').getBoundingClientRect();return (bar.top||ch-150)-44;}
 
 function newGame(){
   bag=[];
-  G={words:[],parts:[],beams:[],lives:3,score:0,read:0,streak:0,missed:[],spawnT:0,speedK:1,t:0};
+  G={words:[],parts:[],beams:[],lives:3,score:0,read:0,streak:0,missed:[],spawnT:0,speedK:1,t:0,spawned:0,done:0,ending:false};
   state='play';hideScreens();$('top').classList.add('on');$('bar').classList.add('on');
   setupBar();updHud();fb('');
   spawn();
 }
 function spawn(){
+  if(S.count&&G.spawned>=S.count)return;
+  G.spawned++;
   const text=nextWord(),fs=fontSize();
   ctx.font=`700 ${fs}px Andika, "Segoe UI", sans-serif`;
   const w=ctx.measureText(show(text)).width+fs*.9,h=fs*1.5;
@@ -184,14 +189,14 @@ function spawn(){
 function updHud(){
   $('hearts').textContent='❤️'.repeat(G.lives)+'🤍'.repeat(Math.max(0,3-G.lives));
   $('score').textContent=G.score;
-  $('readCount').textContent='📖 '+G.read;
+  $('readCount').textContent='📖 '+G.read+(S.count?'   🎯 '+G.done+'/'+S.count:'');
 }
 
 /* ---------- screens ---------- */
 function hideScreens(){['menu','pause','over'].forEach(i=>$(i).classList.remove('on'));}
 function renderMenu(){
   document.querySelectorAll('.seg[data-k]').forEach(seg=>{const k=seg.dataset.k;
-    [...seg.children].forEach(b=>b.classList.toggle('on',String(S[k])===b.dataset.v));});
+    [...seg.children].forEach(b=>b.classList.toggle('on',k==='levels'?S.levels.includes(+b.dataset.v):String(S[k])===b.dataset.v));});
   $('optSay').checked=!!S.say;
   const n=$('srNote');
   if(!SR){n.textContent='Tento prohlížeč neumí rozpoznávat řeč. Hodnotí dospělý, nebo hru otevři v Chrome či Safari.';n.className='note warn';}
@@ -200,13 +205,14 @@ function renderMenu(){
 }
 document.querySelectorAll('.seg[data-k]').forEach(seg=>seg.addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;const k=seg.dataset.k;
-  S[k]=(k==='judge')?b.dataset.v:+b.dataset.v;saveS();renderMenu();}));
+  if(k==='levels'){const v=+b.dataset.v;if(S.levels.includes(v)){if(S.levels.length>1)S.levels=S.levels.filter(x=>x!==v);}else S.levels=[...S.levels,v].sort();}
+  else S[k]=(k==='judge')?b.dataset.v:+b.dataset.v;saveS();renderMenu();}));
 $('optSay').addEventListener('change',e=>{S.say=e.target.checked;saveS();});
 if(!SR)S.judge='adult';
 $('startBtn').addEventListener('click',()=>{try{document.fonts&&document.fonts.load('700 40px Andika');}catch(e){}newGame();});
 $('pauseBtn').addEventListener('click',pause);
 $('resumeBtn').addEventListener('click',()=>{hideScreens();state='play';});
-$('quitBtn').addEventListener('click',()=>{stopRec();gameOver();});
+$('quitBtn').addEventListener('click',()=>{stopRec();gameOver(false);});
 $('againBtn').addEventListener('click',newGame);
 $('menuBtn').addEventListener('click',toMenu);
 function toMenu(){stopRec();state='menu';G=null;$('top').classList.remove('on');$('bar').classList.remove('on');hideScreens();renderMenu();$('menu').classList.add('on');}
@@ -280,7 +286,7 @@ function miss(h){
 }
 function hitWord(w){
   w.hit=true;w.flash=1;
-  G.streak++;G.read++;
+  G.streak++;G.read++;G.done++;
   G.score+=w.text.length*10+Math.min(G.streak,10)*5;
   if(G.read%5===0)G.speedK=Math.min(1.7,G.speedK*1.05);
   fb(['Správně!','Výborně!','Super!','Paráda!','Bezva!'][Math.floor(Math.random()*5)],'ok');
@@ -292,16 +298,17 @@ function hitWord(w){
   ding();updHud();
 }
 function lost(w){
-  w.hit=true;G.lives--;G.streak=0;G.missed.push(w.text);
+  w.hit=true;G.lives--;G.streak=0;G.done++;G.missed.push(w.text);
   fb('Uteklo slovo: '+show(w.text),'bad');
   for(let i=0;i<20;i++){const a=rand(Math.PI,Math.PI*2),s=rand(60,240);G.parts.push({x:w.x+w.w/2,y:w.y+w.h/2,vx:Math.cos(a)*s,vy:Math.sin(a)*s,t:0,life:rand(.4,.9),c:'#ff7a5c'});}
   if(S.say)say(w.text);
   try{navigator.vibrate&&navigator.vibrate(120);}catch(e){}
   updHud();
-  if(G.lives<=0)setTimeout(gameOver,700);
+  if(G.lives<=0&&!G.ending){G.ending=true;setTimeout(()=>gameOver(false),700);}
 }
-function gameOver(){
-  if(!G)return;stopRec();state='over';
+function gameOver(finished){
+  if(!G||state==='over')return;stopRec();state='over';
+  $('oTitle').textContent=finished?'Hotovo!':'Konec hry';
   $('top').classList.remove('on');$('bar').classList.remove('on');
   $('oRead').textContent=G.read;$('oScore').textContent=G.score;
   const uniq=[...new Set(G.missed)];
@@ -352,6 +359,7 @@ function loop(now){
       const live=G.words.filter(w=>!w.hit);
       const lastW=live.reduce((m,w)=>w.y<m.y?w:m,{y:1e9});
       if(!live.length||(live.length<tp.max&&G.spawnT>tp.gap&&lastW.y>90))spawn();
+      if(S.count&&G.done>=S.count&&!G.ending&&G.lives>0){G.ending=true;stopRec();setTimeout(()=>gameOver(true),900);}
       G.words.forEach(w=>{if(w.hit)return;w.y+=speed*dt;if(w.y+w.h>dy)lost(w);});
       G.words=G.words.filter(w=>!w.hit||w.flash>0);
       if(fbT&&now-fbT>2600){$('feedback').textContent='';fbT=0;}
